@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#14161a">
+<title>Pilot TV</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+:root {
+  --bg: #14161a; --panel: #1d2026; --key: #2a2e36; --key-hi: #363b45;
+  --text: #e9ecf1; --muted: #8a919e; --accent: #4f8cff;
+  --on: #2fbf71; --off: #e5484d; --warn: #f5a524;
+  --red: #d64545; --green: #3aa45b; --yellow: #d6b33a; --blue: #3a78d6;
+  --r: 18px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { min-height: 100dvh; display: flex; justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+main { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; }
+
+header { display: flex; align-items: center; gap: 10px; }
+header h1 { font-size: 18px; margin: 0; flex: 1; font-weight: 600; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--on); box-shadow: 0 0 8px var(--on); }
+.dot.wait { background: var(--warn); }
+.dot.bad { background: var(--off); }
+#status { font-size: 13px; color: var(--muted); }
+.icon-btn { background: none; border: 0; color: var(--muted); font-size: 22px; padding: 4px 6px; cursor: pointer; }
+
+.panel { background: var(--panel); border-radius: 24px; padding: 14px; display: grid; gap: 10px; }
+.panel h2 { margin: 0 0 2px 4px; font-size: 12px; font-weight: 600; letter-spacing: .1em; color: var(--muted); }
+.row { display: grid; gap: 10px; }
+.c3 { grid-template-columns: repeat(3, 1fr); }
+.c4 { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+
+button.k { appearance: none; border: 0; border-radius: var(--r); background: var(--key); color: var(--text);
+  font: inherit; font-weight: 600; min-height: 56px; cursor: pointer; user-select: none; touch-action: manipulation;
+  transition: transform .06s, background .1s, opacity .2s; position: relative; }
+button.k:active, button.k.down { transform: scale(.95); background: var(--key-hi); }
+button.k small { display: block; font-size: 11px; font-weight: 500; color: var(--muted); }
+button.sm { min-height: 44px; font-size: 13px; border-radius: 14px; }
+button.on  { background: color-mix(in srgb, var(--on) 22%, var(--key)); }
+button.off { background: color-mix(in srgb, var(--off) 22%, var(--key)); }
+button.pwr { background: color-mix(in srgb, var(--off) 45%, var(--key)); }
+button.big { font-size: 26px; }
+button.color { min-height: 30px; border-radius: 10px; }
+button.cr { background: var(--red); } button.cg { background: var(--green); }
+button.cy { background: var(--yellow); } button.cb { background: var(--blue); }
+button.k.unlearned { opacity: .35; }
+body.learning button.k.unlearned { opacity: 1; }
+
+.rocker { display: grid; grid-template-rows: 1fr auto 1fr; gap: 6px; text-align: center; }
+.rocker span { font-size: 12px; color: var(--muted); letter-spacing: .08em; }
+
+.nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.nav .ok { border-radius: 50%; aspect-ratio: 1; background: var(--accent); }
+
+#chDisplay { text-align: center; font-size: 30px; font-variant-numeric: tabular-nums; min-height: 38px;
+  letter-spacing: .1em; color: var(--accent); }
+
+.learnbar { display: grid; gap: 10px; font-size: 14px; color: var(--muted); }
+.learnbar label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+body.learning .panel { outline: 2px dashed var(--warn); outline-offset: -2px; }
+body.learning .learnbar label { color: var(--warn); }
+
+#toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
+  background: #000c; color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0;
+  transition: .2s; pointer-events: none; max-width: calc(100% - 32px); text-align: center; z-index: 10; }
+#toast.show { opacity: 1; transform: translateX(-50%); }
+
+dialog { background: var(--panel); color: var(--text); border: 0; border-radius: 20px; padding: 20px;
+  width: min(360px, calc(100% - 32px)); }
+dialog::backdrop { background: #000a; }
+dialog h2 { margin: 0 0 12px; font-size: 18px; }
+dialog label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+dialog input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #333a45; background: var(--bg);
+  color: var(--text); font: inherit; }
+dialog .actions { display: flex; gap: 10px; margin-top: 18px; }
+dialog .actions button { flex: 1; min-height: 44px; }
+dialog p { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+.primary { background: var(--accent) !important; }
+
+#wizard { text-align: center; }
+#wzStep { font-size: 13px; color: var(--muted); }
+#wzKey { font-size: 40px; font-weight: 700; margin: 18px 0 6px; color: var(--warn); min-height: 48px; }
+#wzMsg { min-height: 40px; }
+#wzMsg.ok { color: var(--on); }
+#wzBar { height: 4px; background: var(--key); border-radius: 2px; overflow: hidden; margin-top: 14px; }
+#wzBar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="dot" id="dot"></span>
+    <h1>Pilot TV <span id="status">rozłączony</span></h1>
+    <button class="icon-btn" id="btnSettings" aria-label="Ustawienia">⚙</button>
+  </header>
+
+  <!-- Telewizor Sony: kody wbudowane w ESP32 -->
+  <section class="panel">
+    <h2>TELEWIZOR SONY</h2>
+    <div class="row c3">
+      <button class="k on sm" data-key="tv_on">WŁ</button>
+      <button class="k sm" data-key="tv_input">⇄ źródło</button>
+      <button class="k off sm" data-key="tv_off">WYŁ</button>
+    </div>
+    <div class="row c3">
+      <button class="k sm" data-key="tv_vol_down" data-hold>VOL −</button>
+      <button class="k sm" data-key="tv_mute">🔇</button>
+      <button class="k sm" data-key="tv_vol_up" data-hold>VOL +</button>
+    </div>
+  </section>
+
+  <!-- Dekoder ADB: kody uczone z oryginalnego pilota -->
+  <section class="panel">
+    <h2>DEKODER</h2>
+    <div class="row c4">
+      <button class="k sm pwr" data-key="power" data-label="POWER">⏻</button>
+      <button class="k sm" data-key="menu" data-label="MENU">MENU</button>
+      <button class="k sm" data-key="epg" data-label="EPG">EPG</button>
+      <button class="k sm" data-key="info" data-label="INFO">INFO</button>
+    </div>
+    <div class="row c4">
+      <button class="k color cr" data-key="red" data-label="CZERWONY"></button>
+      <button class="k color cg" data-key="green" data-label="ZIELONY"></button>
+      <button class="k color cy" data-key="yellow" data-label="ŻÓŁTY"></button>
+      <button class="k color cb" data-key="blue" data-label="NIEBIESKI"></button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="row c3">
+      <div class="rocker">
+        <button class="k big" data-key="vol_up" data-label="VOL +" data-hold>+</button>
+        <span>GŁOŚNOŚĆ</span>
+        <button class="k big" data-key="vol_down" data-label="VOL −" data-hold>−</button>
+      </div>
+      <div class="rocker">
+        <button class="k" data-key="mute" data-label="WYCISZ 🔇">🔇<small>wycisz</small></button>
+        <span>&nbsp;</span>
+        <button class="k" data-key="list" data-label="LIST">☰<small>lista</small></button>
+      </div>
+      <div class="rocker">
+        <button class="k big" data-key="ch_up" data-label="CH +" data-hold>⌃</button>
+        <span>KANAŁ</span>
+        <button class="k big" data-key="ch_down" data-label="CH −" data-hold>⌄</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div id="chDisplay"></div>
+    <div class="row c3" id="digits"></div>
+  </section>
+
+  <section class="panel">
+    <div class="nav">
+      <button class="k" data-key="home" data-label="⌂ HOME">⌂<small>home</small></button>
+      <button class="k" data-key="up" data-label="▲" data-hold>▲</button>
+      <button class="k" data-key="back" data-label="BACK">↩<small>back</small></button>
+      <button class="k" data-key="left" data-label="◀" data-hold>◀</button>
+      <button class="k ok" data-key="ok" data-label="OK">OK</button>
+      <button class="k" data-key="right" data-label="▶" data-hold>▶</button>
+      <button class="k" data-key="exit" data-label="EXIT">EXIT</button>
+      <button class="k" data-key="down" data-label="▼" data-hold>▼</button>
+      <span></span>
+    </div>
+  </section>
+
+  <div class="learnbar">
+    <button class="k sm primary" id="btnWizard">Naucz pilota dekodera krok po kroku</button>
+    <label><input type="checkbox" id="learnMode"> Naucz pojedynczy przycisk: zaznacz, dotknij przycisk, potem naciśnij go na pilocie</label>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<dialog id="wizard">
+  <div id="wzStep"></div>
+  <div id="wzKey"></div>
+  <div id="wzMsg"></div>
+  <div id="wzBar"><div></div></div>
+  <div class="actions">
+    <button class="k sm" id="wzSkip">Pomiń</button>
+    <button class="k sm" id="wzEnd">Zakończ</button>
+  </div>
+</dialog>
+
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <h2>Połączenie</h2>
+    <label for="sHost">Host brokera MQTT</label>
+    <input id="sHost" placeholder="abc123.s1.eu.hivemq.cloud" autocomplete="off" required>
+    <label for="sPort">Port WebSocket (TLS)</label>
+    <input id="sPort" type="number" value="8884">
+    <label for="sUser">Użytkownik</label>
+    <input id="sUser" autocomplete="username">
+    <label for="sPass">Hasło</label>
+    <input id="sPass" type="password" autocomplete="current-password">
+    <label for="sDev">Nazwa urządzenia (DEVICE_ID)</label>
+    <input id="sDev" value="salon">
+    <p>Dane zapisują się tylko w tym telefonie.</p>
+    <div class="actions">
+      <button class="k" value="cancel" formnovalidate>Anuluj</button>
+      <button class="k primary" value="save">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const CFG_KEY = 'pilottv.cfg';
+let cfg = {};
+try { cfg = JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch {}
+
+let client = null, deviceOnline = false, learned = new Set(), infoKnown = false;
+const isTv = (k) => k.startsWith('tv_');
+
+// ---------- UI pomocnicze ----------
+let toastTimer;
+function toast(msg, ms = 1800) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+function setStatus(state, text) {
+  $('#dot').className = 'dot ' + state;
+  $('#status').textContent = text;
+}
+function refreshStatus() {
+  if (!client || !client.connected) return;
+  deviceOnline ? setStatus('ok', 'gotowy') : setStatus('wait', 'pilot offline');
+}
+function markLearned() {
+  document.querySelectorAll('[data-key]').forEach(b => {
+    const k = b.dataset.key;
+    b.classList.toggle('unlearned', infoKnown && !isTv(k) && !learned.has(k));
+  });
+}
+function keyLabel(b) { return b.dataset.label || b.textContent.trim(); }
+
+// ---------- Cyfry ----------
+const digits = $('#digits');
+['1','2','3','4','5','6','7','8','9','','0',''].forEach(d => {
+  if (!d) { digits.appendChild(document.createElement('span')); return; }
+  const b = document.createElement('button');
+  b.className = 'k big'; b.textContent = d; b.dataset.key = 'd' + d; b.dataset.digit = d;
+  digits.appendChild(b);
+});
+let chBuf = '', chTimer;
+function pushDigit(d) {
+  chBuf = (chBuf + d).slice(0, 4);
+  $('#chDisplay').textContent = chBuf;
+  clearTimeout(chTimer);
+  chTimer = setTimeout(() => {
+    send('ch:' + chBuf);
+    setTimeout(() => { $('#chDisplay').textContent = ''; }, 600);
+    chBuf = '';
+  }, 1200);
+}
+
+// ---------- MQTT ----------
+function topic(t) { return `pilottv/${cfg.dev || 'salon'}/${t}`; }
+
+function connect() {
+  if (client) { client.end(true); client = null; }
+  deviceOnline = false;
+  if (!cfg.host) { setStatus('bad', 'brak ustawień'); openSettings(); return; }
+  setStatus('wait', 'łączenie…');
+  client = mqtt.connect(`wss://${cfg.host}:${cfg.port || 8884}/mqtt`, {
+    username: cfg.user, password: cfg.pass,
+    clientId: 'pilottv-web-' + Math.random().toString(16).slice(2, 10),
+    reconnectPeriod: 3000, connectTimeout: 8000, clean: true,
+  });
+  client.on('connect', () => {
+    client.subscribe([topic('online'), topic('event'), topic('info')]);
+    setStatus('wait', 'czekam na pilota…');
+  });
+  client.on('reconnect', () => setStatus('wait', 'łączenie…'));
+  client.on('offline', () => setStatus('bad', 'brak internetu'));
+  client.on('error', (e) => setStatus('bad', /auth|Not authorized/i.test(e.message) ? 'złe hasło' : 'błąd połączenia'));
+  client.on('message', (t, payload) => {
+    const s = payload.toString();
+    if (t === topic('online')) { deviceOnline = s === '1'; refreshStatus(); return; }
+    if (t === topic('info')) {
+      try { learned = new Set(JSON.parse(s).learned || []); infoKnown = true; markLearned(); } catch {}
+      return;
+    }
+    if (t === topic('event')) {
+      let e; try { e = JSON.parse(s); } catch { return; }
+      if (wizard.active) { wizardEvent(e); return; }
+      if (e.ev === 'learning') toast(`Naciśnij ten przycisk na oryginalnym pilocie (15 s)…`, 15000);
+      else if (e.ev === 'learned') toast(`Nauczony: ${e.key} (${e.proto})`, 2500);
+      else if (e.ev === 'learn_timeout') toast('Nie odebrano sygnału z pilota', 2500);
+      else if (e.ev === 'error') toast('Błąd: ' + e.msg, 2500);
+    }
+  });
+}
+
+function send(cmd) {
+  if (!client || !client.connected) { toast('Brak połączenia'); return false; }
+  if (!deviceOnline) toast('Pilot offline – polecenie może nie dojść');
+  client.publish(topic('cmd'), cmd);
+  if (navigator.vibrate) navigator.vibrate(12);
+  return true;
+}
+
+// ---------- Przyciski (z przytrzymaniem) ----------
+document.querySelectorAll('[data-key]').forEach(b => {
+  let holdT, repT;
+  const stop = () => { clearTimeout(holdT); clearInterval(repT); b.classList.remove('down'); };
+  b.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    const key = b.dataset.key;
+    if ($('#learnMode').checked) { send('learn:' + key); return; }
+    if (b.classList.contains('unlearned')) { toast('Ten przycisk nie jest jeszcze nauczony'); return; }
+    if (b.dataset.digit) { pushDigit(b.dataset.digit); if (navigator.vibrate) navigator.vibrate(12); return; }
+    b.classList.add('down');
+    send(key);
+    if (b.hasAttribute('data-hold')) {
+      holdT = setTimeout(() => { repT = setInterval(() => send(key), 220); }, 450);
+    }
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(e => b.addEventListener(e, stop));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+});
+
+$('#learnMode').addEventListener('change', (e) => {
+  document.body.classList.toggle('learning', e.target.checked);
+  if (!e.target.checked) send('learn_cancel');
+});
+
+// ---------- Kreator nauki pilota dekodera ----------
+const wizard = { active: false, list: [], i: 0 };
+
+function wizardStart() {
+  const all = [...document.querySelectorAll('[data-key]')].filter(b => !isTv(b.dataset.key));
+  const todo = all.filter(b => !learned.has(b.dataset.key));
+  wizard.list = todo.length ? todo : all;
+  wizard.i = 0;
+  wizard.active = true;
+  $('#wizard').showModal();
+  wizardStep();
+}
+function wizardStep() {
+  if (wizard.i >= wizard.list.length) { wizardEnd(); toast('Gotowe – pilot nauczony', 2500); return; }
+  const b = wizard.list[wizard.i];
+  $('#wzStep').textContent = `Przycisk ${wizard.i + 1} z ${wizard.list.length}`;
+  $('#wzKey').textContent = keyLabel(b);
+  $('#wzMsg').className = '';
+  $('#wzMsg').textContent = 'Skieruj pilota dekodera na ESP32 i naciśnij ten przycisk';
+  $('#wzBar div').style.width = (100 * wizard.i / wizard.list.length) + '%';
+  send('learn:' + b.dataset.key);
+}
+function wizardEvent(e) {
+  const cur = wizard.list[wizard.i];
+  if (!cur || e.key !== cur.dataset.key) return;
+  if (e.ev === 'learned') {
+    $('#wzMsg').className = 'ok';
+    $('#wzMsg').textContent = `✓ zapisano (${e.proto})`;
+    wizard.i++;
+    setTimeout(wizardStep, 700);
+  } else if (e.ev === 'learn_timeout') {
+    $('#wzMsg').textContent = 'Nie złapano sygnału – naciśnij jeszcze raz, bliżej odbiornika';
+    send('learn:' + cur.dataset.key);
+  }
+}
+function wizardEnd() {
+  if (wizard.active) send('learn_cancel');
+  wizard.active = false;
+  if ($('#wizard').open) $('#wizard').close();
+}
+$('#btnWizard').addEventListener('click', () => {
+  if (!client || !client.connected || !deviceOnline) { toast('Pilot musi być online'); return; }
+  wizardStart();
+});
+$('#wzSkip').addEventListener('click', () => { wizard.i++; wizardStep(); });
+$('#wzEnd').addEventListener('click', wizardEnd);
+$('#wizard').addEventListener('cancel', wizardEnd);
+
+// ---------- Ustawienia ----------
+function openSettings() {
+  $('#sHost').value = cfg.host || '';
+  $('#sPort').value = cfg.port || 8884;
+  $('#sUser').value = cfg.user || '';
+  $('#sPass').value = cfg.pass || '';
+  $('#sDev').value = cfg.dev || 'salon';
+  $('#settings').showModal();
+}
+$('#btnSettings').addEventListener('click', openSettings);
+$('#settings').addEventListener('close', () => {
+  if ($('#settings').returnValue !== 'save') return;
+  cfg = {
+    host: $('#sHost').value.trim().replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''),
+    port: +$('#sPort').value || 8884,
+    user: $('#sUser').value.trim(),
+    pass: $('#sPass').value,
+    dev: $('#sDev').value.trim() || 'salon',
+  };
+  try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch {}
+  connect();
+});
+
+// Po powrocie do aplikacji (telefon uśpił kartę) – szybkie wznowienie
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && client && !client.connected) client.reconnect();
+});
+
+connect();
+</script>
+</body>
+</html>

@@ -398,7 +398,7 @@ $('#btnSettings').addEventListener('click', openSettings);
 $('#settings').addEventListener('close', () => {
   if ($('#settings').returnValue !== 'save') return;
   cfg = {
-    host: $('#sHost').value.trim().replace(/^wss?:\/\//, '').replace(/[:/].*$/, ''),
+    host: $('#sHost').value.trim().replace(/^[a-z]+:\/\//i, '').replace(/[:/].*$/, ''),
     port: +$('#sPort').value || 8884,
     user: $('#sUser').value.trim(),
     pass: $('#sPass').value,
